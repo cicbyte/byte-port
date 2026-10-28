@@ -1,0 +1,9 @@
+[package]
+name = "byte-port-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui-kit = "0.8"
+byte-port-core = { path = "../../crates/core" }
+anyhow = "1"

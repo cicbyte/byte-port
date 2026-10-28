@@ -1,0 +1,8 @@
+[package]
+name = "byte-port-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+clap = { version = "=4.5", features = ["derive"] }
+byte-port-core = { path = "../../crates/core" }

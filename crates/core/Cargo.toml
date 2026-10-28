@@ -1,0 +1,7 @@
+[package]
+name = "byte-port-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sysinfo = "=0.33.1"
