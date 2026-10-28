@@ -1,92 +1,148 @@
 # byte-port
 
-端口 / 进程管理工具，Rust 实现，零 web、原生二进制、GPU 渲染。
-提供 **GUI**（gpui-kit）与 **CLI** 两种前端，共用同一核心库。
+> Windows 端口与进程管理工具：搜端口 → 看详情 → 级联结束进程树 → 清理孤儿进程。Rust 原生实现，GUI + CLI 双前端。
 
-## 仓库结构
+[English](README_EN.md) | 简体中文
 
-Cargo workspace 多 crate：
+![Rust](https://img.shields.io/badge/Rust-1.75+-dea584?logo=rust)
+![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)
+![GUI](https://img.shields.io/badge/GUI-gpui--kit%200.8-DEA584)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
-```
-byte-port/
-├── crates/
-│   └── core/          # byte-port-core：扫描 / 进程关联 / 筛选 / 查询 / 进程树
-└── apps/
-    ├── gui/           # byte-port-gui：gpui-kit 桌面前端（GPUI 渲染 + Catppuccin Mocha）
-    │   └── themes/    # catppuccin.json（内嵌进二进制）
-    └── cli/           # byte-port-cli：命令行前端
-```
+## 目录
 
-- `byte-port-core`：端口枚举（Windows `iphlpapi` 直读 FFI）、`sysinfo` 进程关联、
-  共享的筛选（`filter`）与端口查询（`query`）。系统调用层与 UI 完全解耦。
-- `byte-port-gui`：即时模式 GUI，后台线程扫描 → `mpsc` 回传，表格 + 暗色主题。
-- `byte-port-cli`：`clap` 子命令式 CLI。
+- [功能特性](#功能特性)
+- [快速开始](#快速开始)
+- [CLI 用法](#cli-用法)
+- [GUI](#gui)
+- [工作原理](#工作原理)
+- [平台说明](#平台说明)
+- [许可证](#许可证)
 
-## 功能
+## 功能特性
 
-### GUI（gpui-kit，Catppuccin Mocha 深色主题）
-百度式双态界面，启动不预扫、输入回车/点搜索才扫描。
-- **首页态**：居中大搜索框 + 类型选择（端口/孤儿）
-- **结果态**：顶部小搜索框 + TabBar + DataTable 结果表
-- **端口页**：扫描全部 TCP/UDP 端口，端口→PID→进程名/路径关联；行内「结束」，
-  弹窗预览整棵子进程树后级联结束
-- **孤儿页**：列出父进程已退出的孤儿（PID/进程名/路径/子进程数）；
-  逐个「清理」或「全部清理」，均带二次确认
-- 切 tab 不重扫，各自独立缓存；中文渲染零配置（Windows DirectWrite 系统字体回退）
+- **跨字段搜索** — 一个关键字同时匹配端口号、PID、进程名、可执行路径、地址，秒级定位「谁占了我的端口」
+- **级联结束进程树** — 结束进程时先预览整棵子进程树（如 bash → node → esbuild），确认后先子后父全部清理，不留新孤儿
+- **孤儿进程检测与清理** — 找出父进程已退出但仍在运行的残留进程（Windows 无收养机制，最容易堆积），支持逐个或全部清理
+- **GUI + CLI 双前端** — 图形界面适合日常点选，命令行适合脚本与终端流，共用同一核心库
+- **原生性能** — 端口枚举直读 Windows `iphlpapi`（`repr(C)` 结构体 FFI），零子进程开销；零 web 技术，单文件二进制
 
-### CLI
-主工作流：**search 定位 → show 看详情 → kill 关闭**；另支持 **orphans 孤儿进程清理**。
-- `search <关键字>`：跨字段搜索（端口号/PID/进程名/路径/地址），支持 `--listen` /
-  `--proto <tcp|udp>` / `--json`
-- `show <pid>`：查看某进程占用的全部端口 + 可执行路径，`--json` 机器可读
-- `kill <pid>`：结束进程及其子进程（级联整棵子树，执行前预览），`-f / --force` 跳过确认
-- `orphans`：检测/清理孤儿进程（父进程已退出者）。默认列出；`--kill <pid>` 清理指定、
-  `--kill-all` 清理全部（高危，二次确认）、`--json` 机器可读
-- `ls [关键字]`：列出端口，有关键字则搜索、无则列全部；支持 `--listen` / `--proto` /
-  `--pid <N>` / `--name <str>` / `--json`
-
-#### 关于孤儿进程
-孤儿进程（父进程已退出、子进程仍在运行）**不是 Windows 独有问题**，三大平台都有。
-差异在于：Linux/macOS 由 `init`/`launchd`(PID 1) **自动收养**，被视为正常机制；
-**Windows 无收养机制**，父进程退出后子进程真正孤立，所以最容易残留、最需要手动清理。
-本工具的检测逻辑基于 `sysinfo::Process::parent()`，跨平台通用，但对 Windows 价值最大。
-系统关键进程（PID 0/1）永不视为孤儿；所有 kill 默认二次确认。
-
-## 构建与运行
+## 快速开始
 
 ```bash
-# 编译整个工作区
-cargo build --workspace
-
-# --- CLI ---
-cargo run -p byte-port-cli -- search 8080          # 搜索端口/进程
-cargo run -p byte-port-cli -- search svchost --listen
-cargo run -p byte-port-cli -- show 1588            # 看某进程详情
-cargo run -p byte-port-cli -- kill 1234 -f         # 关闭进程及子进程（-f 跳过确认）
-cargo run -p byte-port-cli -- orphans              # 列出孤儿进程
-cargo run -p byte-port-cli -- orphans --kill 1234  # 清理指定孤儿（级联子进程）
-cargo run -p byte-port-cli -- ls                   # 列全部端口
-
-# --- GUI（建议以管理员运行以获取完整进程/端口信息）---
-cargo run -p byte-port-gui --release
-# 产物：target/release/byte-port-gui.exe
+git clone https://github.com/cicbyte/byte-port.git
+cd byte-port
+cargo build --release --workspace
 ```
 
-## 技术实现
-- **端口枚举**：Windows `iphlpapi` 的 `GetExtendedTcpTable` / `GetExtendedUdpTable`
-  （`TCP_TABLE_OWNER_PID_ALL`），自绘 `repr(C)` 结构体直读，零额外进程开销
-- **进程信息**：`sysinfo` 跨平台枚举、kill；进程树/孤儿检测基于 `Process::parent()`
-- **GUI**：gpui-kit 0.8（Zed GPUI 渲染，crates.io 发布）；扫描走 `cx.spawn` +
-  `background_spawn` 线程池 + revision 防过期；DataTable 用 TableDelegate 自定义列与操作按钮；
-  弹窗用 `open_dialog`（子树预览）/ `open_alert_dialog`（全部清理）
-- **主题**：Catppuccin Mocha（`themes/catppuccin.json` 内嵌，编译进二进制）
-- **中文**：Windows 上 GPUI 走 DirectWrite 系统字体回退，零配置
+产物：
 
+| 文件 | 说明 |
+|---|---|
+| `target/release/byte-port-cli.exe` | 命令行版（约 1 MB） |
+| `target/release/byte-port-gui.exe` | 图形界面版（约 24 MB） |
 
-## 后续（见架构文档）
-- M2 自动刷新/排序体验打磨
-- M3 文件/文件夹占用检测（Windows RestartManager）
-- M4 Linux/macOS 适配（`ss`/`lsof`）
+```bash
+# CLI：三步走完核心工作流
+byte-port-cli search 8080        # 搜：谁占用了 8080
+byte-port-cli show 1588          # 看：这个进程的所有端口和路径
+byte-port-cli kill 1588          # 杀：预览子树 → 确认级联结束
 
-> 注：本原型以 Windows 为首要目标，`port_scanner.rs` 已用 `cfg(windows)` 隔离，
-> 非 Windows 平台为待实现占位。系统调用模块与 UI 框架解耦，可独立替换。
+# GUI
+byte-port-gui.exe                # 建议以管理员运行，可获取完整进程信息
+```
+
+## CLI 用法
+
+主工作流：**search 定位 → show 看详情 → kill 关闭**；另支持 orphans 孤儿清理。
+
+### 全部命令
+
+| 命令 | 说明 |
+|---|---|
+| `search <关键字>` | 跨字段搜索（端口号/PID/进程名/路径/地址） |
+| `show <pid>` | 查看某进程占用的全部端口 + 可执行路径 |
+| `kill <pid>` | 级联结束进程及其子进程（执行前预览） |
+| `orphans` | 检测/清理孤儿进程（父进程已退出者） |
+| `ls [关键字]` | 列出端口（兜底命令，有关键字则搜索） |
+
+### `search` — 搜索定位
+
+```bash
+$ byte-port-cli search svchost --listen
+协议  本地地址:端口     状态    PID   进程名
+---  ---------------  ------  ----  -----------
+TCP  0.0.0.0:135      LISTEN  1588  svchost.exe
+...
+
+# 选项：--listen 仅 TCP 监听 / --proto tcp|udp / --json 机器可读
+```
+
+### `show` — 进程详情
+
+```bash
+$ byte-port-cli show 1588
+PID      : 1588
+进程名   : svchost.exe
+可执行   : (未知)          # 系统进程需管理员权限才可见路径
+占用端口 : 1
+```
+
+### `kill` — 级联结束
+
+```bash
+$ byte-port-cli kill 61076
+即将结束 PID 61076（含子进程，共 6 个进程）:
+  ├ PID 61076  bash.exe
+    ├ PID 61260  bash.exe
+      ├ PID 38652  node.exe
+        ...
+⚠ 将级联结束以上子进程
+确认结束? [y/N] y
+完成：成功 6 / 失败 0
+```
+
+`-f / --force` 跳过确认（仍级联）。
+
+### `orphans` — 孤儿检测与清理
+
+```bash
+byte-port-cli orphans                    # 列出全部孤儿（PID/进程名/路径/子进程数）
+byte-port-cli orphans --json             # 机器可读
+byte-port-cli orphans --kill 52868       # 清理指定孤儿（级联其子树）
+byte-port-cli orphans --kill-all         # 清理全部（二次确认）
+```
+
+## GUI
+
+基于 [gpui-kit](https://github.com/longbridge/gpui-kit)（Zed GPUI 渲染）+ Catppuccin Mocha 深色主题，百度式双态界面：
+
+- **首页态** — 居中大搜索框，启动不预扫、零信息干扰；回车或点击搜索才触发扫描
+- **结果态** — 端口 / 孤儿双标签页（各自独立缓存，切换不重扫）；DataTable 表格，行内「结束 / 清理」按钮
+- **安全确认** — 所有结束操作弹窗预览整棵子进程树，二次确认后级联执行
+- **中文零配置** — Windows 上经 DirectWrite 系统字体回退，无需打包字体文件
+
+## 工作原理
+
+```
+crates/core（byte-port-core）          apps/
+├─ port_scanner  iphlpapi FFI 直读    ├─ gui/   gpui-kit 前端
+├─ proc_tree     进程树/孤儿检测      └─ cli/   clap 前端
+├─ filter        跨字段筛选
+└─ query         按端口/PID 查询
+```
+
+- **端口枚举**：`GetExtendedTcpTable` / `GetExtendedUdpTable`（`TCP_TABLE_OWNER_PID_ALL`），自绘 `repr(C)` 结构体直读，不依赖 windows crate
+- **进程关联与结束**：`sysinfo` 枚举进程名/路径，`Process::parent()` 构建进程树
+- **GUI 线程模型**：扫描走 `cx.spawn` + `background_spawn` 线程池，revision 计数丢弃过期结果，UI 永不卡顿
+- **系统调用层与 UI 完全解耦**：替换平台后端或 UI 框架互不影响
+
+## 平台说明
+
+**目前仅支持 Windows**（端口枚举走 `iphlpapi`，非 Windows 平台为编译通过的空占位）。
+
+关于孤儿进程：Linux/macOS 由 init/launchd（PID 1）自动收养孤儿，被视为正常机制；**Windows 无收养机制**，父进程退出后子进程真正孤立，最需要手动清理——这也是本工具聚焦 Windows 的原因之一。检测逻辑基于 `sysinfo::Process::parent()`，跨平台通用，未来适配 `ss` / `lsof` 后即可扩展。
+
+## 许可证
+
+[MIT](LICENSE) © 2026 cicbyte
