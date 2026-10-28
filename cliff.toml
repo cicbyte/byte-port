@@ -1,0 +1,33 @@
+# git-cliff 配置：从中文 conventional commits 生成分类 changelog
+# （发版说明由 CI 现场生成直接进 Release body，不落盘不产生提交）
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}\
+## {{ group }}
+
+{% for commit in commits %}\
+- {{ commit.message | split(pat="\n") | first }} ({{ commit.id | truncate(length=7, end="") }})
+{% endfor %}\
+{% endfor %}\
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "newest"
+
+commit_parsers = [
+  { message = "^feat", group = "🚀 新功能" },
+  { message = "^fix", group = "🐛 修复" },
+  { message = "^perf", group = "⚡ 性能" },
+  { message = "^refactor", group = "♻️ 重构" },
+  { message = "^doc", group = "📚 文档" },
+  { message = "^test", group = "✅ 测试" },
+  { message = "^style", group = "🎨 样式" },
+  { message = "^chore", group = "🔧 杂项" },
+  { message = ".*", group = "📦 其他" },
+]

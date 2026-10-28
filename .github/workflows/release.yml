@@ -1,0 +1,101 @@
+name: Release
+
+# 发布流水线：tag 推送（v*，通常由 Tag Release 一键发版触发）或手动指定已存在 tag。
+# 矩阵构建只产出 artifacts；汇聚 job 集中生成 changelog（cliff 经文件传 body）
+# 与 sha256 后统一挂 Release。产物命名 byte-port-<pkg>-<target>.zip。
+# 目前仅 Windows：端口扫描核心走 iphlpapi FFI（非 Windows 为空占位），
+# GUI 用 gpui-kit（Windows 验证最成熟）。后续适配 Linux/macOS 时扩矩阵即可。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布标签（如 v0.1.0，需已推送）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # CLI 与 GUI 并行构建（GUI 依赖 gpui-kit 全量编译较慢，分开跑互不拖累）
+          - { pkg: byte-port-cli, bin: byte-port-cli }
+          - { pkg: byte-port-gui, bin: byte-port-gui }
+    runs-on: windows-latest
+    env:
+      TARGET: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.pkg }}
+      - name: Build
+        run: cargo build --release --target ${{ env.TARGET }} -p ${{ matrix.pkg }}
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="byte-port-${{ matrix.pkg }}-${{ env.TARGET }}"
+          mkdir -p "$STAGE"
+          cp "target/${{ env.TARGET }}/release/${{ matrix.bin }}.exe" "$STAGE/"
+          cp README.md "$STAGE/"
+          # 7z 而非 Compress-Archive：后者产生反斜杠分隔符的 zip，跨平台解压会坏
+          7z a "$STAGE.zip" "$STAGE"
+      - uses: actions/upload-artifact@v4
+        with:
+          # 必须按 pkg 区分：v4 同名 artifact 会互相覆盖
+          name: dist-${{ matrix.pkg }}
+          path: byte-port-${{ matrix.pkg }}-${{ env.TARGET }}.zip
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      # cliff 生成发版说明需要全历史与 tag
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: cliff
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          # 多行 body 经文件传给 release 最稳（避免引号/换行转义问题）
+          OUTPUT: CHANGELOG.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          ls -la byte-port-*
+          for f in byte-port-*.zip; do
+            [ -e "$f" ] || continue
+            sha256sum "$f" > "$f.sha256"
+          done
+          cat byte-port-*.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          body_path: CHANGELOG.md
+          files: |
+            byte-port-*.zip
+            byte-port-*.sha256
